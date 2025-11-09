@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import random
+import math
 from collections import deque, namedtuple
 
 
@@ -109,7 +110,7 @@ class DQNAgent:
             gamma: Discount factor
             epsilon_start: Initial epsilon for epsilon-greedy
             epsilon_end: Minimum epsilon value
-            epsilon_decay: Epsilon decay rate
+            epsilon_decay: Epsilon decay constant (higher = slower decay)
             buffer_size: Size of replay buffer
             batch_size: Batch size for training
             target_update_freq: Frequency of target network updates
@@ -119,7 +120,7 @@ class DQNAgent:
         self.state_size = state_size
         self.action_size = action_size
         self.gamma = gamma
-        self.epsilon = epsilon_start
+        self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
         self.batch_size = batch_size
@@ -138,22 +139,30 @@ class DQNAgent:
         # Replay buffer
         self.memory = ReplayBuffer(buffer_size)
         
-        # Training step counter
-        self.step_count = 0
+        # Step counters
+        self.steps_done = 0  # For epsilon decay
+        self.train_steps = 0  # For target network updates
+    
+    def get_epsilon(self):
+        """Calculate current epsilon using exponential decay."""
+        return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * \
+            math.exp(-1. * self.steps_done / self.epsilon_decay)
     
     def select_action(self, state, epsilon=None):
         """
-        Select action using epsilon-greedy policy.
+        Select action using epsilon-greedy policy with exponential decay.
         
         Args:
             state: Current state
-            epsilon: Epsilon value (if None, use agent's epsilon)
+            epsilon: Epsilon value (if None, calculate from steps_done)
         
         Returns:
             Selected action
         """
         if epsilon is None:
-            epsilon = self.epsilon
+            epsilon = self.get_epsilon()
+        
+        self.steps_done += 1
         
         if random.random() < epsilon:
             return random.randrange(self.action_size)
@@ -198,14 +207,15 @@ class DQNAgent:
         self.optimizer.step()
         
         # Update target network
-        self.step_count += 1
-        if self.step_count % self.target_update_freq == 0:
+        self.train_steps += 1
+        if self.train_steps % self.target_update_freq == 0:
             self.target_network.load_state_dict(self.q_network.state_dict())
         
-        # Decay epsilon
-        self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
-        
         return loss.item()
+    
+    def decay_epsilon(self):
+        """Deprecated: Epsilon now decays automatically in select_action."""
+        pass
     
     def save(self, filepath):
         """Save model weights."""
@@ -213,8 +223,8 @@ class DQNAgent:
             'q_network_state_dict': self.q_network.state_dict(),
             'target_network_state_dict': self.target_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'epsilon': self.epsilon,
-            'step_count': self.step_count
+            'steps_done': self.steps_done,
+            'train_steps': self.train_steps
         }, filepath)
     
     def load(self, filepath):
@@ -223,8 +233,8 @@ class DQNAgent:
         self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
         self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.epsilon = checkpoint['epsilon']
-        self.step_count = checkpoint['step_count']
+        self.steps_done = checkpoint.get('steps_done', 0)
+        self.train_steps = checkpoint.get('train_steps', 0)
 
 
 class DDQNAgent:
@@ -255,7 +265,7 @@ class DDQNAgent:
             gamma: Discount factor
             epsilon_start: Initial epsilon for epsilon-greedy
             epsilon_end: Minimum epsilon value
-            epsilon_decay: Epsilon decay rate
+            epsilon_decay: Epsilon decay constant (higher = slower decay)
             buffer_size: Size of replay buffer
             batch_size: Batch size for training
             target_update_freq: Frequency of target network updates
@@ -265,7 +275,7 @@ class DDQNAgent:
         self.state_size = state_size
         self.action_size = action_size
         self.gamma = gamma
-        self.epsilon = epsilon_start
+        self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
         self.batch_size = batch_size
@@ -284,22 +294,30 @@ class DDQNAgent:
         # Replay buffer
         self.memory = ReplayBuffer(buffer_size)
         
-        # Training step counter
-        self.step_count = 0
+        # Step counters
+        self.steps_done = 0  # For epsilon decay
+        self.train_steps = 0  # For target network updates
+    
+    def get_epsilon(self):
+        """Calculate current epsilon using exponential decay."""
+        return self.epsilon_end + (self.epsilon_start - self.epsilon_end) * \
+            math.exp(-1. * self.steps_done / self.epsilon_decay)
     
     def select_action(self, state, epsilon=None):
         """
-        Select action using epsilon-greedy policy.
+        Select action using epsilon-greedy policy with exponential decay.
         
         Args:
             state: Current state
-            epsilon: Epsilon value (if None, use agent's epsilon)
+            epsilon: Epsilon value (if None, calculate from steps_done)
         
         Returns:
             Selected action
         """
         if epsilon is None:
-            epsilon = self.epsilon
+            epsilon = self.get_epsilon()
+        
+        self.steps_done += 1
         
         if random.random() < epsilon:
             return random.randrange(self.action_size)
@@ -347,14 +365,15 @@ class DDQNAgent:
         self.optimizer.step()
         
         # Update target network
-        self.step_count += 1
-        if self.step_count % self.target_update_freq == 0:
+        self.train_steps += 1
+        if self.train_steps % self.target_update_freq == 0:
             self.target_network.load_state_dict(self.q_network.state_dict())
         
-        # Decay epsilon
-        self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
-        
         return loss.item()
+    
+    def decay_epsilon(self):
+        """Deprecated: Epsilon now decays automatically in select_action."""
+        pass
     
     def save(self, filepath):
         """Save model weights."""
@@ -362,8 +381,8 @@ class DDQNAgent:
             'q_network_state_dict': self.q_network.state_dict(),
             'target_network_state_dict': self.target_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'epsilon': self.epsilon,
-            'step_count': self.step_count
+            'steps_done': self.steps_done,
+            'train_steps': self.train_steps
         }, filepath)
     
     def load(self, filepath):
@@ -372,5 +391,5 @@ class DDQNAgent:
         self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
         self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.epsilon = checkpoint['epsilon']
-        self.step_count = checkpoint['step_count']
+        self.steps_done = checkpoint.get('steps_done', 0)
+        self.train_steps = checkpoint.get('train_steps', 0)

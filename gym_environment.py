@@ -16,7 +16,29 @@ from gymnasium.wrappers import RecordVideo
 from models import DQNAgent, DDQNAgent
 
 
-def create_environment(env_name, render_mode=None, video_folder=None, episode_trigger=None):
+def generate_run_name(algorithm, env_name, learning_rate, gamma, epsilon_decay, buffer_size, batch_size):
+    """
+    Generate a descriptive name for the run that includes key hyperparameters.
+    
+    Args:
+        algorithm: DQN or DDQN
+        env_name: Environment name
+        learning_rate: Learning rate
+        gamma: Discount factor
+        epsilon_decay: Epsilon decay rate
+        buffer_size: Replay buffer size
+        batch_size: Batch size
+    
+    Returns:
+        Formatted run name string
+    """
+    env_short = env_name.split('-')[0]  # e.g., CartPole from CartPole-v1
+    return (f"{algorithm}_{env_short}_"
+            f"lr{learning_rate}_g{gamma}_"
+            f"ed{epsilon_decay}_buf{buffer_size//1000}k_bs{batch_size}")
+
+
+def create_environment(env_name, render_mode=None, video_folder=None, episode_trigger=None, name_prefix=None):
     """
     Create a Gymnasium environment with optional video recording.
     
@@ -25,6 +47,7 @@ def create_environment(env_name, render_mode=None, video_folder=None, episode_tr
         render_mode: Render mode (None, 'rgb_array', 'human')
         video_folder: Folder to save videos (None for no recording)
         episode_trigger: Function to determine which episodes to record
+        name_prefix: Prefix for video file names
     
     Returns:
         Gymnasium environment
@@ -32,11 +55,13 @@ def create_environment(env_name, render_mode=None, video_folder=None, episode_tr
     env = gym.make(env_name, render_mode=render_mode if video_folder else None)
     
     if video_folder:
+        if name_prefix is None:
+            name_prefix = f"{env_name}-rl-video"
         env = RecordVideo(
             env, 
             video_folder=video_folder,
             episode_trigger=episode_trigger if episode_trigger else lambda x: True,
-            name_prefix=f"{env_name}-rl-video"
+            name_prefix=name_prefix
         )
     
     return env
@@ -65,6 +90,7 @@ def discretize_action(action, env, num_bins=10):
 def train_agent(
     agent,
     env_name,
+    run_name,
     num_episodes=1000,
     max_steps=500,
     log_interval=10,
@@ -77,6 +103,7 @@ def train_agent(
     Args:
         agent: DQN or DDQN agent
         env_name: Name of the Gymnasium environment
+        run_name: Name for this run (used for saving models)
         num_episodes: Number of training episodes
         max_steps: Maximum steps per episode
         log_interval: Interval for logging to W&B
@@ -133,11 +160,12 @@ def train_agent(
         if (episode + 1) % log_interval == 0:
             avg_reward = np.mean(episode_rewards[-log_interval:])
             avg_loss = np.mean(episode_losses[-log_interval:])
+            current_epsilon = agent.get_epsilon()
             
             print(f"Episode {episode + 1}/{num_episodes} - "
                   f"Avg Reward: {avg_reward:.2f}, "
                   f"Avg Loss: {avg_loss:.4f}, "
-                  f"Epsilon: {agent.epsilon:.4f}")
+                  f"Epsilon: {current_epsilon:.4f}")
             
             if use_wandb:
                 wandb.log({
@@ -145,11 +173,11 @@ def train_agent(
                     'avg_reward': avg_reward,
                     'episode_reward': episode_reward,
                     'avg_loss': avg_loss,
-                    'epsilon': agent.epsilon
+                    'epsilon': current_epsilon
                 })
     
-    # Save final model
-    model_path = os.path.join(save_dir, f"{env_name}_final.pt")
+    # Save final model with descriptive name
+    model_path = os.path.join(save_dir, f"{run_name}.pt")
     agent.save(model_path)
     print(f"Model saved to {model_path}")
     
@@ -160,6 +188,7 @@ def train_agent(
 def test_agent(
     agent,
     env_name,
+    run_name,
     num_tests=100,
     max_steps=500,
     render=False,
@@ -172,6 +201,7 @@ def test_agent(
     Args:
         agent: Trained DQN or DDQN agent
         env_name: Name of the Gymnasium environment
+        run_name: Name for this run (used for video naming)
         num_tests: Number of test episodes
         max_steps: Maximum steps per episode
         render: Whether to render the environment
@@ -188,7 +218,8 @@ def test_agent(
             env_name,
             render_mode='rgb_array',
             video_folder=video_folder,
-            episode_trigger=lambda x: x % 10 == 0  # Record every 10th episode
+            episode_trigger=lambda x: x % 10 == 0,  # Record every 10th episode
+            name_prefix=run_name
         )
     else:
         env = create_environment(env_name, render_mode='human' if render else None)
@@ -276,8 +307,8 @@ def main():
                         help='Initial epsilon')
     parser.add_argument('--epsilon-end', type=float, default=0.01,
                         help='Minimum epsilon')
-    parser.add_argument('--epsilon-decay', type=float, default=0.995,
-                        help='Epsilon decay rate')
+    parser.add_argument('--epsilon-decay', type=float, default=1000,
+                        help='Epsilon decay constant (higher = slower decay)')
     parser.add_argument('--buffer-size', type=int, default=100000,
                         help='Replay buffer size')
     parser.add_argument('--batch-size', type=int, default=64,
@@ -309,15 +340,6 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     
-    # Initialize W&B
-    use_wandb = not args.no_wandb
-    if use_wandb:
-        wandb.init(
-            project='rl-dqn-gymnasium',
-            config=vars(args),
-            name=f"{args.algorithm}_{args.env}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
-    
     # Create environment to get dimensions
     temp_env = gym.make(args.env)
     state_size = temp_env.observation_space.shape[0]
@@ -329,7 +351,8 @@ def main():
     print(f"Action size: {action_size}")
     print(f"Action space: {'Discrete' if is_discrete else 'Continuous (discretized)'}")
     print(f"Algorithm: {args.algorithm}")
-    print(f"Device: {args.device}\n")
+    print(f"Device: {args.device}")
+    print(f"Epsilon: {args.epsilon_start} -> {args.epsilon_end} (decay: {args.epsilon_decay})\n")
     
     # Create agent
     AgentClass = DQNAgent if args.algorithm == 'DQN' else DDQNAgent
@@ -348,6 +371,26 @@ def main():
         device=args.device
     )
     
+    # Generate descriptive run name with key hyperparameters
+    run_name = generate_run_name(
+        algorithm=args.algorithm,
+        env_name=args.env,
+        learning_rate=args.learning_rate,
+        gamma=args.gamma,
+        epsilon_decay=args.epsilon_decay,
+        buffer_size=args.buffer_size,
+        batch_size=args.batch_size
+    )
+    
+    # Initialize W&B
+    use_wandb = not args.no_wandb
+    if use_wandb:
+        wandb.init(
+            project='rl-dqn-gymnasium',
+            config=vars(args),
+            name=run_name
+        )
+    
     # Load model if specified
     if args.load_model:
         print(f"Loading model from {args.load_model}")
@@ -359,6 +402,7 @@ def main():
         agent = train_agent(
             agent=agent,
             env_name=args.env,
+            run_name=run_name,
             num_episodes=args.num_episodes,
             max_steps=args.max_steps,
             log_interval=10,
@@ -371,11 +415,12 @@ def main():
     test_results = test_agent(
         agent=agent,
         env_name=args.env,
+        run_name=run_name,
         num_tests=args.num_tests,
         max_steps=args.max_steps,
         render=args.render,
         record_video=args.record_video,
-        video_folder=f'videos/{args.env}_{args.algorithm}'
+        video_folder=f'videos'
     )
     
     # Log test results to W&B
