@@ -127,11 +127,8 @@ class DQNAgent:
         self.target_update_freq = target_update_freq
         self.device = device
         
-        # Q-Network and Target Network
+        # Q-Network (no target network for vanilla DQN)
         self.q_network = DQNetwork(state_size, action_size, hidden_sizes).to(device)
-        self.target_network = DQNetwork(state_size, action_size, hidden_sizes).to(device)
-        self.target_network.load_state_dict(self.q_network.state_dict())
-        self.target_network.eval()
         
         # Optimizer
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=learning_rate)
@@ -139,9 +136,8 @@ class DQNAgent:
         # Replay buffer
         self.memory = ReplayBuffer(buffer_size)
         
-        # Step counters
+        # Step counter
         self.steps_done = 0  # For epsilon decay
-        self.train_steps = 0  # For target network updates
     
     def get_epsilon(self):
         """Calculate current epsilon using exponential decay."""
@@ -190,26 +186,21 @@ class DQNAgent:
         next_states = next_states.to(self.device)
         dones = dones.to(self.device)
         
-        # Get current Q values
+        # Get current Q values from policy network
         current_q_values = self.q_network(states).gather(1, actions.unsqueeze(1))
         
-        # Get next Q values from target network
+        # Vanilla DQN: Use same network for computing target Q-values (no target network)
         with torch.no_grad():
-            next_q_values = self.target_network(next_states).max(1)[0]
+            next_q_values = self.q_network(next_states).max(1)[0]
             target_q_values = rewards + (1 - dones) * self.gamma * next_q_values
         
-        # Compute loss
-        loss = nn.MSELoss()(current_q_values.squeeze(), target_q_values)
+        # Compute loss (using Smooth L1 Loss / Huber Loss)
+        loss = nn.SmoothL1Loss()(current_q_values.squeeze(), target_q_values)
         
         # Optimize
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        
-        # Update target network
-        self.train_steps += 1
-        if self.train_steps % self.target_update_freq == 0:
-            self.target_network.load_state_dict(self.q_network.state_dict())
         
         return loss.item()
     
@@ -221,20 +212,16 @@ class DQNAgent:
         """Save model weights."""
         torch.save({
             'q_network_state_dict': self.q_network.state_dict(),
-            'target_network_state_dict': self.target_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'steps_done': self.steps_done,
-            'train_steps': self.train_steps
+            'steps_done': self.steps_done
         }, filepath)
     
     def load(self, filepath):
         """Load model weights."""
         checkpoint = torch.load(filepath, map_location=self.device)
         self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
-        self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.steps_done = checkpoint.get('steps_done', 0)
-        self.train_steps = checkpoint.get('train_steps', 0)
 
 
 class DDQNAgent:
@@ -356,8 +343,8 @@ class DDQNAgent:
             next_q_values = self.target_network(next_states).gather(1, next_actions.unsqueeze(1)).squeeze()
             target_q_values = rewards + (1 - dones) * self.gamma * next_q_values
         
-        # Compute loss
-        loss = nn.MSELoss()(current_q_values.squeeze(), target_q_values)
+        # Compute loss (using Smooth L1 Loss / Huber Loss)
+        loss = nn.SmoothL1Loss()(current_q_values.squeeze(), target_q_values)
         
         # Optimize
         self.optimizer.zero_grad()
