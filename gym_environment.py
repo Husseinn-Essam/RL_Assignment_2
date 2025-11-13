@@ -346,6 +346,21 @@ def main():
     action_size, is_discrete = get_action_space_info(temp_env)
     temp_env.close()
     
+    # Initialize W&B before constructing the agent so sweep configs can override args
+    use_wandb = not args.no_wandb
+    wandb_run = None
+    if use_wandb:
+        wandb_run = wandb.init(
+            project='rl-dqn-gymnasium',
+            config=vars(args)
+        )
+        if wandb_run is not None:
+            # Update argparse namespace with sweep-provided values
+            for key, value in wandb.config.items():
+                if hasattr(args, key):
+                    setattr(args, key, value)
+
+    # Display final configuration after potential sweep overrides
     print(f"\nEnvironment: {args.env}")
     print(f"State size: {state_size}")
     print(f"Action size: {action_size}")
@@ -353,8 +368,8 @@ def main():
     print(f"Algorithm: {args.algorithm}")
     print(f"Device: {args.device}")
     print(f"Epsilon: {args.epsilon_start} -> {args.epsilon_end} (decay: {args.epsilon_decay})\n")
-    
-    # Create agent
+
+    # Create agent after potential sweep overrides have been applied
     AgentClass = DQNAgent if args.algorithm == 'DQN' else DDQNAgent
     agent = AgentClass(
         state_size=state_size,
@@ -370,7 +385,7 @@ def main():
         hidden_sizes=args.hidden_sizes,
         device=args.device
     )
-    
+
     # Generate descriptive run name with key hyperparameters
     run_name = generate_run_name(
         algorithm=args.algorithm,
@@ -381,15 +396,9 @@ def main():
         buffer_size=args.buffer_size,
         batch_size=args.batch_size
     )
-    
-    # Initialize W&B
-    use_wandb = not args.no_wandb
-    if use_wandb:
-        wandb.init(
-            project='rl-dqn-gymnasium',
-            config=vars(args),
-            name=run_name
-        )
+
+    if wandb_run is not None:
+        wandb_run.name = run_name
     
     # Load model if specified
     if args.load_model:

@@ -1,0 +1,33 @@
+name: dqn_ddqn_acrobot_sweep
+method: bayes
+metric:
+  name: avg_reward
+  goal: maximize
+early_terminate:
+  type: hyperband
+  min_iter: 100
+  s: 2
+parameters:
+  algorithm:
+    values: [DQN, DDQN]
+  learning_rate:
+    values: [1e-5, 1e-4, 1e-3]
+  gamma:
+    values: [0.98, 0.99, 0.999]
+  epsilon_decay:
+    values: [500, 1000, 2000]
+  buffer_size:
+    values: [50000, 100000, 200000]
+  batch_size:
+    values: [64, 128]
+  target_update_freq:
+    values: [10]
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --env=Acrobot-v1
+  - --num-episodes=500
+  - --num-tests=40
+  - --max-steps=500
+program: gym_environment.py

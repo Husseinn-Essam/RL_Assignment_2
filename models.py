@@ -190,9 +190,8 @@ class DQNAgent:
         current_q_values = self.q_network(states).gather(1, actions.unsqueeze(1))
         
         # Vanilla DQN: Use same network for computing target Q-values (no target network)
-        with torch.no_grad():
-            next_q_values = self.q_network(next_states).max(1)[0]
-            target_q_values = rewards + (1 - dones) * self.gamma * next_q_values
+        next_q_values = self.q_network(next_states).max(1)[0]
+        target_q_values = rewards + (1 - dones) * self.gamma * next_q_values
         
         # Compute loss (using Smooth L1 Loss / Huber Loss)
         loss = nn.SmoothL1Loss()(current_q_values.squeeze(), target_q_values)
